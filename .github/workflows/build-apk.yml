@@ -1,0 +1,49 @@
+name: Build APK
+
+on:
+  push:
+    branches: [portrait-fix]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Build debug APK
+        run: ./gradlew assembleNonRoot_gameDebug --no-daemon
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          find app/build/outputs/apk -name '*.apk' -exec cp {} out/ \;
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: out/*.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="portrait-fix-${{ github.run_number }}"
+          gh release create "$TAG" out/*.apk --title "Portrait fix build ${{ github.run_number }}" \
+            --notes "Rotate restarts the stream with a matching resolution; portrait resolutions lock the app to portrait." --target "${{ github.sha }}"

@@ -182,6 +182,8 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     private int displayWidth;
     private int displayHeight;
     private int currentOrientation;
+    // Set by rotateScreen(); survives recreate() so onCreate can pick the new orientation
+    private static Boolean rotateOverridePortrait = null;
 
     public NvConnection conn;
     private SpinnerDialog spinner;
@@ -419,14 +421,33 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 prefConfig.videoScaleMode = PreferenceConfiguration.ScaleMode.STRETCH;
             }
 
-            if (prefConfig.autoOrientation) {
+            // A fresh launch forgets the last manual rotate; a recreate() from rotateScreen() keeps it
+            if (savedInstanceState == null) {
+                rotateOverridePortrait = null;
+            }
+
+            // A portrait custom resolution (e.g. 1080x1920) means the user wants a portrait stream
+            boolean portraitResolution = prefConfig.height > prefConfig.width;
+
+            if (rotateOverridePortrait != null) {
+                currentOrientation = rotateOverridePortrait
+                        ? Configuration.ORIENTATION_PORTRAIT
+                        : Configuration.ORIENTATION_LANDSCAPE;
+            } else if (portraitResolution) {
+                currentOrientation = Configuration.ORIENTATION_PORTRAIT;
+            } else if (prefConfig.autoOrientation) {
                 currentOrientation = getResources().getConfiguration().orientation;
             } else {
                 currentOrientation = Configuration.ORIENTATION_LANDSCAPE;
             }
 
             boolean portraitMode = currentOrientation == Configuration.ORIENTATION_PORTRAIT;
-            shouldInvertDecoderResolution = portraitMode && prefConfig.autoInvertVideoResolution;
+            if (rotateOverridePortrait != null || portraitResolution) {
+                // Request a stream whose shape matches the screen we are going to show it on
+                shouldInvertDecoderResolution = portraitMode != portraitResolution;
+            } else {
+                shouldInvertDecoderResolution = portraitMode && prefConfig.autoInvertVideoResolution;
+            }
 
             displayWidth = shouldInvertDecoderResolution ? prefConfig.height : prefConfig.width;
             displayHeight = shouldInvertDecoderResolution ? prefConfig.width : prefConfig.height;
@@ -895,8 +916,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
             if (streamSurfaceView != null) {
                 // Avoid resizes/glitches that break the compositor
-                int vw = (prefConfig != null && prefConfig.width > 0) ? prefConfig.width : displayWidth;
-                int vh = (prefConfig != null && prefConfig.height > 0) ? prefConfig.height : displayHeight;
+                // Use the size of the stream we actually requested (it may be inverted for portrait)
+                int vw = displayWidth > 0 ? displayWidth : prefConfig.width;
+                int vh = displayHeight > 0 ? displayHeight : prefConfig.height;
                 try { streamSurfaceView.getHolder().setFixedSize(vw, vh); } catch (Throwable ignored) {}
                 try { streamSurfaceView.setZOrderOnTop(false); } catch (Throwable ignored) {}
                 try { streamSurfaceView.setZOrderMediaOverlay(false); } catch (Throwable ignored) {}
@@ -4019,13 +4041,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     public void rotateScreen() {
-        if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
-            currentOrientation = Configuration.ORIENTATION_PORTRAIT;
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT);
-        } else {
-            currentOrientation = Configuration.ORIENTATION_LANDSCAPE;
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
-        }
+        // The stream resolution is negotiated at connect time, so rotating only the activity
+        // would leave a landscape stream letterboxed inside a portrait screen. Flip the
+        // orientation and restart the activity so the host is asked for a matching resolution.
+        rotateOverridePortrait = currentOrientation == Configuration.ORIENTATION_LANDSCAPE;
+        recreate();
     }
 
     /**
