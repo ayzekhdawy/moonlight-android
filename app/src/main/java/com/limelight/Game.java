@@ -184,6 +184,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     private int currentOrientation;
     // Set by rotateScreen(); survives recreate() so onCreate can pick the new orientation
     private static Boolean rotateOverridePortrait = null;
+    private static boolean rotateRestartPending = false;
 
     public NvConnection conn;
     private SpinnerDialog spinner;
@@ -421,10 +422,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 prefConfig.videoScaleMode = PreferenceConfiguration.ScaleMode.STRETCH;
             }
 
-            // A fresh launch forgets the last manual rotate; a recreate() from rotateScreen() keeps it
-            if (savedInstanceState == null) {
+            // A fresh launch forgets the last manual rotate; a restart from rotateScreen() keeps it
+            if (!rotateRestartPending) {
                 rotateOverridePortrait = null;
             }
+            rotateRestartPending = false;
 
             // A portrait custom resolution (e.g. 1080x1920) means the user wants a portrait stream
             boolean portraitResolution = prefConfig.height > prefConfig.width;
@@ -1872,6 +1874,15 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 );
             }
 
+        }
+
+        if (rotateRestartPending) {
+            // Connection teardown is serialized inside moonlight-common, so the new
+            // instance can safely start connecting right away
+            Intent restartIntent = new Intent(getIntent());
+            restartIntent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            startActivity(restartIntent);
+            overridePendingTransition(0, 0);
         }
 
         finish();
@@ -4045,7 +4056,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         // would leave a landscape stream letterboxed inside a portrait screen. Flip the
         // orientation and restart the activity so the host is asked for a matching resolution.
         rotateOverridePortrait = currentOrientation == Configuration.ORIENTATION_LANDSCAPE;
-        recreate();
+        rotateRestartPending = true;
+        // onStop() stops the connection and then relaunches this activity (recreate() would
+        // not work because onStop() also calls finish() and ends the new instance too).
+        finish();
     }
 
     /**
